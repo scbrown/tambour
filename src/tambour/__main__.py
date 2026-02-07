@@ -8,6 +8,9 @@ Commands:
     abort <issue> [--worktree-base PATH]
     agent [--cli CLI] [--issue ID] [--label LABEL]
     finish <issue> [--merge] [--no-continue]
+    health status [--json]
+    health check <issue> [--json]
+    health recover <issue>
     lock status
     lock acquire <holder> [--timeout SECONDS]
     lock release [--holder NAME]
@@ -309,6 +312,37 @@ def create_parser() -> argparse.ArgumentParser:
         "--storage",
         help="Path to metrics.jsonl file",
     )
+
+    # health command
+    health_parser = subparsers.add_parser("health", help="Health checks and zombie detection")
+    health_subparsers = health_parser.add_subparsers(
+        dest="health_command", help="Health subcommands"
+    )
+
+    # health status
+    health_status_parser = health_subparsers.add_parser(
+        "status", help="Show health of all in-progress tasks"
+    )
+    health_status_parser.add_argument(
+        "--json", action="store_true", dest="json_output",
+        help="Output as JSON",
+    )
+
+    # health check
+    health_check_parser = health_subparsers.add_parser(
+        "check", help="Check health of a specific task"
+    )
+    health_check_parser.add_argument("issue", help="Issue ID to check")
+    health_check_parser.add_argument(
+        "--json", action="store_true", dest="json_output",
+        help="Output as JSON",
+    )
+
+    # health recover
+    health_recover_parser = health_subparsers.add_parser(
+        "recover", help="Recover a zombie task (unclaim and reset to open)"
+    )
+    health_recover_parser.add_argument("issue", help="Issue ID to recover")
 
     # finish command
     finish_parser = subparsers.add_parser(
@@ -724,6 +758,167 @@ def cmd_heartbeat(args: argparse.Namespace) -> int:
     return 0
 
 
+def format_task_health(health: object) -> str:
+    """Format a single TaskHealth for display.
+
+    Args:
+        health: A TaskHealth instance.
+
+    Returns:
+        Formatted string for the task.
+    """
+    if health.is_zombie:
+        indicator = "!"
+        label = "ZOMBIE"
+    else:
+        indicator = "*"
+        label = "healthy"
+
+    assignee = health.assignee or "(none)"
+    worktree = "exists" if health.worktree_exists else "missing"
+
+    activity = ""
+    if health.last_activity:
+        from datetime import datetime, timezone
+
+        age = (datetime.now(timezone.utc) - health.last_activity).total_seconds()
+        if age < 60:
+            activity = f", last seen {int(age)}s ago"
+        elif age < 3600:
+            activity = f", last seen {int(age / 60)}m ago"
+        else:
+            activity = f", last seen {int(age / 3600)}h ago"
+
+    return f"{indicator} {health.issue_id}  [{label}]  assignee:{assignee}  worktree:{worktree}{activity}"
+
+
+def format_health_results(results: list) -> str:
+    """Format a list of TaskHealth results for display.
+
+    Args:
+        results: List of TaskHealth instances.
+
+    Returns:
+        Formatted string for all results.
+    """
+    if not results:
+        return "No in-progress tasks found."
+
+    lines = []
+    zombies = [h for h in results if h.is_zombie]
+    healthy = [h for h in results if not h.is_zombie]
+
+    if zombies:
+        lines.append(f"Zombies ({len(zombies)}):")
+        for h in zombies:
+            lines.append(f"  {format_task_health(h)}")
+
+    if healthy:
+        if zombies:
+            lines.append("")
+        lines.append(f"Healthy ({len(healthy)}):")
+        for h in healthy:
+            lines.append(f"  {format_task_health(h)}")
+
+    summary_parts = [f"{len(results)} task(s)"]
+    if zombies:
+        summary_parts.append(f"{len(zombies)} zombie(s)")
+    lines.append("")
+    lines.append(", ".join(summary_parts))
+
+    return "\n".join(lines)
+
+
+def task_health_to_dict(health: object) -> dict:
+    """Convert a TaskHealth to a JSON-serializable dict.
+
+    Args:
+        health: A TaskHealth instance.
+
+    Returns:
+        Dictionary representation.
+    """
+    return {
+        "issue_id": health.issue_id,
+        "status": health.status,
+        "assignee": health.assignee,
+        "worktree_path": str(health.worktree_path) if health.worktree_path else None,
+        "worktree_exists": health.worktree_exists,
+        "is_zombie": health.is_zombie,
+        "last_activity": health.last_activity.isoformat() if health.last_activity else None,
+    }
+
+
+def cmd_health_status(args: argparse.Namespace) -> int:
+    """Handle 'health status' command."""
+    import json
+
+    from tambour.config import Config
+    from tambour.health import HealthChecker
+
+    config = Config.load_or_default()
+    checker = HealthChecker(config)
+    results = checker.check_all()
+
+    if args.json_output:
+        print(json.dumps([task_health_to_dict(h) for h in results], indent=2))
+    else:
+        print(format_health_results(results))
+
+    # Exit 1 if any zombies found (useful for scripting)
+    zombies = [h for h in results if h.is_zombie]
+    return 1 if zombies else 0
+
+
+def cmd_health_check(args: argparse.Namespace) -> int:
+    """Handle 'health check' command."""
+    import json
+
+    from tambour.config import Config
+    from tambour.health import HealthChecker
+
+    config = Config.load_or_default()
+    checker = HealthChecker(config)
+    health = checker.check_task(args.issue)
+
+    if health is None:
+        print(f"Task not found: {args.issue}", file=sys.stderr)
+        return 1
+
+    if args.json_output:
+        print(json.dumps(task_health_to_dict(health), indent=2))
+    else:
+        print(format_task_health(health))
+
+    return 1 if health.is_zombie else 0
+
+
+def cmd_health_recover(args: argparse.Namespace) -> int:
+    """Handle 'health recover' command."""
+    from tambour.config import Config
+    from tambour.health import HealthChecker
+
+    config = Config.load_or_default()
+    checker = HealthChecker(config)
+
+    health = checker.check_task(args.issue)
+    if health is None:
+        print(f"Task not found: {args.issue}", file=sys.stderr)
+        return 1
+
+    if not health.is_zombie:
+        print(f"Task {args.issue} is not a zombie (status: {health.status})")
+        return 0
+
+    success = checker._recover_zombie(health)
+    if success:
+        print(f"Recovered {args.issue}: status reset to open")
+        return 0
+    else:
+        print(f"Failed to recover {args.issue}", file=sys.stderr)
+        return 1
+
+
 def cmd_metrics_collect(args: argparse.Namespace) -> int:
     """Handle 'metrics collect' command.
 
@@ -834,6 +1029,16 @@ def main() -> NoReturn:
             sys.exit(cmd_metrics_refresh(args))
         else:
             parser.parse_args(["metrics", "--help"])
+            sys.exit(1)
+    elif args.command == "health":
+        if args.health_command == "status":
+            sys.exit(cmd_health_status(args))
+        elif args.health_command == "check":
+            sys.exit(cmd_health_check(args))
+        elif args.health_command == "recover":
+            sys.exit(cmd_health_recover(args))
+        else:
+            parser.parse_args(["health", "--help"])
             sys.exit(1)
     elif args.command == "finish":
         from tambour.finish import cmd_finish

@@ -11,6 +11,7 @@ from tambour.finish import (
     FinishResult,
     _find_main_repo,
     cmd_finish,
+    cmd_lock_acquire,
     cmd_lock_status,
     cmd_lock_release,
 )
@@ -316,14 +317,111 @@ class TestCmdLockRelease:
     """Tests for cmd_lock_release function."""
 
     def test_release_success(self, tmp_path):
-        """Test successful lock release."""
+        """Test successful force release."""
+        args = MagicMock()
+        args.holder = None
         with patch("tambour.finish._find_current_repo", return_value=tmp_path), \
              patch.object(MergeLock, "force_release", return_value=True), \
              patch("builtins.print") as mock_print:
 
-            result = cmd_lock_release(MagicMock())
+            result = cmd_lock_release(args)
 
             assert result == 0
-            # Check that success message was printed
             calls = [str(c) for c in mock_print.call_args_list]
             assert any("released" in c.lower() or "Lock released" in c for c in calls)
+
+    def test_release_with_holder(self, tmp_path):
+        """Test release with holder verification."""
+        args = MagicMock()
+        args.holder = "test-issue"
+        with patch("tambour.finish._find_current_repo", return_value=tmp_path), \
+             patch.object(MergeLock, "release", return_value=True), \
+             patch("builtins.print") as mock_print:
+
+            result = cmd_lock_release(args)
+
+            assert result == 0
+            calls = [str(c) for c in mock_print.call_args_list]
+            assert any("test-issue" in c for c in calls)
+
+    def test_release_with_holder_mismatch(self, tmp_path):
+        """Test release fails on holder mismatch."""
+        args = MagicMock()
+        args.holder = "wrong-holder"
+        with patch("tambour.finish._find_current_repo", return_value=tmp_path), \
+             patch.object(MergeLock, "release", return_value=False), \
+             patch("builtins.print"):
+
+            result = cmd_lock_release(args)
+
+            assert result == 1
+
+    def test_release_not_in_repo(self):
+        """Test release when not in a git repo."""
+        args = MagicMock()
+        args.holder = None
+        with patch("tambour.finish._find_current_repo", return_value=None), \
+             patch("builtins.print"):
+
+            result = cmd_lock_release(args)
+
+            assert result == 1
+
+
+class TestCmdLockAcquire:
+    """Tests for cmd_lock_acquire function."""
+
+    def test_acquire_success(self, tmp_path):
+        """Test successful lock acquisition."""
+        args = MagicMock()
+        args.holder = "test-issue"
+        args.timeout = None
+        with patch("tambour.finish._find_current_repo", return_value=tmp_path), \
+             patch.object(MergeLock, "acquire", return_value=True), \
+             patch("builtins.print") as mock_print:
+
+            result = cmd_lock_acquire(args)
+
+            assert result == 0
+            calls = [str(c) for c in mock_print.call_args_list]
+            assert any("test-issue" in c for c in calls)
+
+    def test_acquire_timeout(self, tmp_path):
+        """Test lock acquisition timeout."""
+        args = MagicMock()
+        args.holder = "test-issue"
+        args.timeout = 10
+        with patch("tambour.finish._find_current_repo", return_value=tmp_path), \
+             patch.object(MergeLock, "acquire", return_value=False), \
+             patch("builtins.print"):
+
+            result = cmd_lock_acquire(args)
+
+            assert result == 1
+
+    def test_acquire_with_custom_timeout(self, tmp_path):
+        """Test lock acquisition with custom timeout."""
+        args = MagicMock()
+        args.holder = "test-issue"
+        args.timeout = 60
+        with patch("tambour.finish._find_current_repo", return_value=tmp_path) as mock_repo, \
+             patch.object(MergeLock, "__init__", return_value=None) as mock_init, \
+             patch.object(MergeLock, "acquire", return_value=True), \
+             patch("builtins.print"):
+
+            result = cmd_lock_acquire(args)
+
+            assert result == 0
+            mock_init.assert_called_once_with(tmp_path, timeout=60)
+
+    def test_acquire_not_in_repo(self):
+        """Test acquire when not in a git repo."""
+        args = MagicMock()
+        args.holder = "test-issue"
+        args.timeout = None
+        with patch("tambour.finish._find_current_repo", return_value=None), \
+             patch("builtins.print"):
+
+            result = cmd_lock_acquire(args)
+
+            assert result == 1

@@ -206,7 +206,7 @@ class FinishCommand:
                 issue_id=self.issue_id,
                 issue_title=issue_title,
                 error=f"Timeout waiting for merge lock after {self._lock.timeout}s. "
-                      "Use 'tambour lock-status' to check, or 'tambour lock-release' to force-release.",
+                      "Use 'tambour lock status' to check, or 'tambour lock release' to force-release.",
             )
         print(f"Acquired merge lock for {self.issue_id}")
 
@@ -492,14 +492,46 @@ def cmd_lock_release(args) -> int:
         print("Error: Not in a git repository", file=sys.stderr)
         return 1
 
-    print("Force-releasing merge lock...")
-    lock = MergeLock(repo)
-    if lock.force_release():
-        print("Lock released.")
+    holder = getattr(args, "holder", None)
+
+    if holder:
+        lock = MergeLock(repo)
+        if lock.release(holder):
+            print(f"Lock released (holder: {holder}).")
+        else:
+            print(f"Failed to release lock (holder mismatch or lock not held).", file=sys.stderr)
+            return 1
     else:
-        print("Lock was not held.")
+        print("Force-releasing merge lock...")
+        lock = MergeLock(repo)
+        if lock.force_release():
+            print("Lock released.")
+        else:
+            print("Lock was not held.")
 
     return 0
+
+
+def cmd_lock_acquire(args) -> int:
+    """Handle 'lock acquire' command."""
+    repo = _find_current_repo()
+    if not repo:
+        print("Error: Not in a git repository", file=sys.stderr)
+        return 1
+
+    timeout = getattr(args, "timeout", None)
+    lock = MergeLock(repo, timeout=timeout)
+
+    print(f"Acquiring merge lock for '{args.holder}'...")
+    if lock.acquire(args.holder):
+        print(f"Lock acquired by '{args.holder}'.")
+        return 0
+    else:
+        print(
+            f"Failed to acquire lock (timeout after {lock.timeout}s).",
+            file=sys.stderr,
+        )
+        return 1
 
 
 def _find_main_repo() -> Path | None:

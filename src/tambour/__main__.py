@@ -8,8 +8,11 @@ Commands:
     abort <issue> [--worktree-base PATH]
     agent [--cli CLI] [--issue ID] [--label LABEL]
     finish <issue> [--merge] [--no-continue]
-    lock-status
-    lock-release
+    lock status
+    lock acquire <holder> [--timeout SECONDS]
+    lock release [--holder NAME]
+    lock-status                    (deprecated alias for lock status)
+    lock-release                   (deprecated alias for lock release)
     context collect [--prompt FILE] [--issue ID] [--worktree PATH] [--verbose]
     events emit <event> [--issue ID] [--worktree PATH]
     metrics collect [--storage PATH]
@@ -328,11 +331,38 @@ def create_parser() -> argparse.ArgumentParser:
         help="Skip the 'continue to next task' flow after completion",
     )
 
-    # lock-status command
-    subparsers.add_parser("lock-status", help="Check merge lock status")
+    # lock command with subcommands
+    lock_parser = subparsers.add_parser("lock", help="Merge lock management")
+    lock_subparsers = lock_parser.add_subparsers(
+        dest="lock_command", help="Lock subcommands"
+    )
 
-    # lock-release command
-    subparsers.add_parser("lock-release", help="Force-release stuck merge lock")
+    # lock status
+    lock_subparsers.add_parser("status", help="Check merge lock status")
+
+    # lock acquire
+    lock_acquire_parser = lock_subparsers.add_parser(
+        "acquire", help="Acquire the merge lock"
+    )
+    lock_acquire_parser.add_argument("holder", help="Lock holder identifier (e.g. issue ID)")
+    lock_acquire_parser.add_argument(
+        "--timeout",
+        type=int,
+        help="Maximum seconds to wait for lock (default: TAMBOUR_LOCK_TIMEOUT or 300)",
+    )
+
+    # lock release
+    lock_release_parser = lock_subparsers.add_parser(
+        "release", help="Release the merge lock"
+    )
+    lock_release_parser.add_argument(
+        "--holder",
+        help="Verify ownership before releasing (omit to force-release)",
+    )
+
+    # Deprecated aliases
+    subparsers.add_parser("lock-status", help="(deprecated: use 'lock status')")
+    subparsers.add_parser("lock-release", help="(deprecated: use 'lock release')")
 
     # worktrees command
     subparsers.add_parser(
@@ -770,6 +800,22 @@ def main() -> NoReturn:
         from tambour.finish import cmd_finish
 
         sys.exit(cmd_finish(args))
+    elif args.command == "lock":
+        if args.lock_command == "status":
+            from tambour.finish import cmd_lock_status
+
+            sys.exit(cmd_lock_status(args))
+        elif args.lock_command == "acquire":
+            from tambour.finish import cmd_lock_acquire
+
+            sys.exit(cmd_lock_acquire(args))
+        elif args.lock_command == "release":
+            from tambour.finish import cmd_lock_release
+
+            sys.exit(cmd_lock_release(args))
+        else:
+            parser.parse_args(["lock", "--help"])
+            sys.exit(1)
     elif args.command == "lock-status":
         from tambour.finish import cmd_lock_status
 

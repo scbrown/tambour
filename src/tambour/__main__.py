@@ -26,6 +26,8 @@ Commands:
     daemon start|stop|status
     config validate
     worktrees
+    spinoff <title> [--description TEXT] [--type TYPE] [--priority P] [--labels L]
+                     [--parent ID] [--blocks-current] [--issue ID]
 """
 
 from __future__ import annotations
@@ -381,6 +383,43 @@ def create_parser() -> argparse.ArgumentParser:
     init_parser.add_argument(
         "--directory",
         help="Directory to initialize (default: current directory)",
+    )
+
+    # spinoff command
+    spinoff_parser = subparsers.add_parser(
+        "spinoff", help="Create a follow-up issue linked to current work"
+    )
+    spinoff_parser.add_argument("title", help="Title of the new issue")
+    spinoff_parser.add_argument(
+        "--description", "-d",
+        help="Issue description",
+    )
+    spinoff_parser.add_argument(
+        "--type", "-t",
+        default="task",
+        help="Issue type (bug, task, feature, chore). Default: task",
+    )
+    spinoff_parser.add_argument(
+        "--priority", "-p",
+        help="Priority (0-4 or P0-P4)",
+    )
+    spinoff_parser.add_argument(
+        "--labels", "-l",
+        action="append",
+        help="Labels (can be specified multiple times)",
+    )
+    spinoff_parser.add_argument(
+        "--parent",
+        help="Parent issue ID",
+    )
+    spinoff_parser.add_argument(
+        "--blocks-current",
+        action="store_true",
+        help="New issue blocks the current issue (adds dependency)",
+    )
+    spinoff_parser.add_argument(
+        "--issue",
+        help="Current issue ID (auto-detected from TAMBOUR_ISSUE_ID env var)",
     )
 
     return parser
@@ -828,6 +867,10 @@ def main() -> NoReturn:
         sys.exit(cmd_worktrees(args))
     elif args.command == "init":
         sys.exit(cmd_init(args))
+    elif args.command == "spinoff":
+        from tambour.spinoff import cmd_spinoff
+
+        sys.exit(cmd_spinoff(args))
     else:
         parser.print_help()
         sys.exit(1)

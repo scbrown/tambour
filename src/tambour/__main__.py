@@ -21,6 +21,7 @@ Commands:
     metrics refresh [--window DAYS]
     daemon start|stop|status
     config validate
+    worktrees
 """
 
 from __future__ import annotations
@@ -331,6 +332,11 @@ def create_parser() -> argparse.ArgumentParser:
 
     # lock-release command
     subparsers.add_parser("lock-release", help="Force-release stuck merge lock")
+
+    # worktrees command
+    subparsers.add_parser(
+        "worktrees", help="List git worktrees with tambour status"
+    )
 
     return parser
 
@@ -650,6 +656,20 @@ def cmd_metrics_collect(args: argparse.Namespace) -> int:
     return 0
 
 
+def cmd_worktrees(args: argparse.Namespace) -> int:
+    """Handle 'worktrees' command."""
+    from tambour.worktrees import format_worktrees, list_worktrees
+
+    try:
+        worktrees = list_worktrees()
+    except Exception as e:
+        print(f"Error listing worktrees: {e}", file=sys.stderr)
+        return 1
+
+    print(format_worktrees(worktrees))
+    return 0
+
+
 def main() -> NoReturn:
     """Main entry point."""
     parser = create_parser()
@@ -733,6 +753,8 @@ def main() -> NoReturn:
         from tambour.finish import cmd_lock_release
 
         sys.exit(cmd_lock_release(args))
+    elif args.command == "worktrees":
+        sys.exit(cmd_worktrees(args))
     else:
         parser.print_help()
         sys.exit(1)

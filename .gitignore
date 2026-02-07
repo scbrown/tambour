@@ -19,3 +19,9 @@ Thumbs.db
 
 # Tambour local data
 .tambour/
+
+# Gas Town (added by gt)
+.runtime/
+.claude/
+.logs/
+.beads/

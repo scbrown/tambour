@@ -4,6 +4,7 @@ Usage:
     python -m tambour <command> [options]
 
 Commands:
+    init [--force] [--directory PATH]
     abort <issue> [--worktree-base PATH]
     agent [--cli CLI] [--issue ID] [--label LABEL]
     finish <issue> [--merge] [--no-continue]
@@ -338,6 +339,20 @@ def create_parser() -> argparse.ArgumentParser:
         "worktrees", help="List git worktrees with tambour status"
     )
 
+    # init command
+    init_parser = subparsers.add_parser(
+        "init", help="Initialize tambour in the current project"
+    )
+    init_parser.add_argument(
+        "--force",
+        action="store_true",
+        help="Overwrite existing configuration",
+    )
+    init_parser.add_argument(
+        "--directory",
+        help="Directory to initialize (default: current directory)",
+    )
+
     return parser
 
 
@@ -656,6 +671,16 @@ def cmd_metrics_collect(args: argparse.Namespace) -> int:
     return 0
 
 
+def cmd_init(args: argparse.Namespace) -> int:
+    """Handle 'init' command."""
+    from tambour.init import init_tambour
+
+    directory = Path(args.directory) if args.directory else None
+    success, message = init_tambour(directory=directory, force=args.force)
+    print(message)
+    return 0 if success else 1
+
+
 def cmd_worktrees(args: argparse.Namespace) -> int:
     """Handle 'worktrees' command."""
     from tambour.worktrees import format_worktrees, list_worktrees
@@ -755,6 +780,8 @@ def main() -> NoReturn:
         sys.exit(cmd_lock_release(args))
     elif args.command == "worktrees":
         sys.exit(cmd_worktrees(args))
+    elif args.command == "init":
+        sys.exit(cmd_init(args))
     else:
         parser.print_help()
         sys.exit(1)
